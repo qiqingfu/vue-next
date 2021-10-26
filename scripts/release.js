@@ -209,7 +209,9 @@ async function main() {
 
   // push to GitHub
   step('\nPushing to GitHub...')
+  // 打 git tag 标签
   await runIfNotDry('git', ['tag', `v${targetVersion}`])
+  // 
   await runIfNotDry('git', ['push', 'origin', `refs/tags/v${targetVersion}`])
   await runIfNotDry('git', ['push'])
 
@@ -288,6 +290,12 @@ function updateDeps(pkg, depType, version) {
   })
 }
 
+/**
+ * 向 npm 注册软件包，并制定软件包的标签
+ * @param {*} pkgName 
+ * @param {*} version 
+ * @param {*} runIfNotDry 
+ */
 async function publishPackage(pkgName, version, runIfNotDry) {
   if (skippedPackages.includes(pkgName)) {
     return
@@ -295,6 +303,9 @@ async function publishPackage(pkgName, version, runIfNotDry) {
   const pkgRoot = getPkgRoot(pkgName)
   const pkgPath = path.resolve(pkgRoot, 'package.json')
   const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'))
+  /**
+   * 如果你在package.json中设置 "private": true，那么npm将拒绝发布它。
+   */
   if (pkg.private) {
     return
   }
@@ -320,21 +331,33 @@ async function publishPackage(pkgName, version, runIfNotDry) {
 
   step(`Publishing ${pkgName}...`)
   try {
+    /**
+     * 使用 yarn 发布 npm 包
+     */
     await runIfNotDry(
       // note: use of yarn is intentional here as we rely on its publishing
       // behavior.
+      // --new-version <version> 通过使用version的值来跳过新版本的提示
       'yarn',
       [
         'publish',
         '--new-version',
         version,
+        /**
+         * 发布带有特定标签的软件包，别人使用时可以安装：
+         * yarn add vue@next
+         * yarn add @vue/compiler-core@alpha
+         */
         ...(releaseTag ? ['--tag', releaseTag] : []),
+        /**
+         * 控制是否将此包作为公共包发布
+         */
         '--access',
         'public'
       ],
       {
-        cwd: pkgRoot,
-        stdio: 'pipe'
+        cwd: pkgRoot, // 子进程的当前工作目录 packages/**/
+        stdio: 'pipe' // 子进程和父进程创建管道
       }
     )
     console.log(chalk.green(`Successfully published ${pkgName}@${version}`))
