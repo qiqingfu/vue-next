@@ -15,6 +15,9 @@ const execa = require('execa')
 const preId =
   args.preid ||
   (semver.prerelease(currentVersion) && semver.prerelease(currentVersion)[0])
+/**
+ * 是否为发布演练
+ */
 const isDryRun = args.dry
 /**
  * 跳过运行测试
@@ -35,7 +38,7 @@ const skippedPackages = []
 
 /**
  * 如果是预发布版本，versionIncrements 中多加入 prepatch、preminor、premajor 和 prerelease
- * 在命令行交互时用于选择的项
+ * 在命令行交互时用于选择发布的版本选项
  * 
  * 发布类型
  */
@@ -70,13 +73,14 @@ const run = (bin, args, opts = {}) =>
  */
   execa(bin, args, { stdio: 'inherit', ...opts })
 
+  /**
+   * 当进行发布测试时，只输出脚本的 log
+   */
 const dryRun = (bin, args, opts = {}) =>
   console.log(chalk.blue(`[dryrun] ${bin} ${args.join(' ')}`), opts)
 
-  /**
-   * isDryRun ??
-   */
-const runIfNotDry = isDryRun ? dryRun : run
+
+  const runIfNotDry = isDryRun ? dryRun : run
 
 /**
  * 获取 packages 下指定的包路径
@@ -90,6 +94,9 @@ const getPkgRoot = pkg => path.resolve(__dirname, '../packages/' + pkg)
  */
 const step = msg => console.log(chalk.cyan(msg))
 
+/**
+ * release 主入口函数
+ */
 async function main() {
   /**
    * 如果第一个参数手动指定了要发布的版本号
@@ -97,7 +104,7 @@ async function main() {
   let targetVersion = args._[0]
 
   /**
-   * 如果未指定目标版本号，则询问用户
+   * 如果未指定目标版本号，进行命令行交互，让用户选择
    */
   if (!targetVersion) {
     // no explicit version, offer suggestions
@@ -109,7 +116,7 @@ async function main() {
     })
 
     /**
-     * 自定义版本
+     * 如果选择自定义版本
      * type：input，接收用户输入并返回一个字符串
      */
     if (release === 'custom') {
@@ -125,7 +132,6 @@ async function main() {
       /**
        * const release = 'major (3.2.20)'
        * release.match(/\((.*))\/)[1]  // 3.2.20
-       * 
        */
       targetVersion = release.match(/\((.*)\)/)[1]
     }
@@ -154,38 +160,36 @@ async function main() {
     return
   }
 
-  // run tests before release
+  // 输入执行到每一步的 log 日志 
   step('\nRunning tests...')
   /**
    * skipTests：跳过测试
-   * isDryRun：???
+   * isDryRun：如果设置了 dry，则跳过测试
    */
   if (!skipTests && !isDryRun) {
     // 删除 jest 缓存目录，然后不运行测试直接退出
     await run(bin('jest'), ['--clearCache'])
-    // 运行 npm test 命令??
+    // 运行 npm test 命令
     await run('npm', ['test', '--', '--bail'])
   } else {
     console.log(`(skipped)`)
   }
 
-  // update all package versions and inter-dependencies
+  // 更新所有软件包的版本和相互依赖关系
   step('\nUpdating cross dependencies...')
   updateVersions(targetVersion)
 
-  // build all packages with types
+  // 构建所有带类型的软件包
   step('\nBuilding all packages...')
   if (!skipBuild && !isDryRun) {
     // 运行 npm run build --release
     await run('npm', ['run', 'build', '--', '--release'])
-    // test generated dts files
     step('\nVerifying type declarations...')
     await run('npm', ['run', 'test-dts-only'])
   } else {
     console.log(`(skipped)`)
   }
 
-  // generate changelog
   // 生成更新日志
   await run(`npm`, ['run', 'changelog'])
 
@@ -201,13 +205,13 @@ async function main() {
     console.log('No changes to commit.')
   }
 
-  // publish packages
+  // 发布软件包
   step('\nPublishing packages...')
   for (const pkg of packages) {
     await publishPackage(pkg, targetVersion, runIfNotDry)
   }
 
-  // push to GitHub
+  // 推送到 GitHub
   step('\nPushing to GitHub...')
   // 打 git tag 标签
   await runIfNotDry('git', ['tag', `v${targetVersion}`])
@@ -236,9 +240,9 @@ async function main() {
  * @param {string} version 
  */
 function updateVersions(version) {
-  // 1. update root package.json
+  // 1. 更新根 package.json
   updatePackage(path.resolve(__dirname, '..'), version)
-  // 2. update all packages
+  // 2. 更新所有的 packages
   packages.forEach(p => updatePackage(getPkgRoot(p), version))
 }
 
@@ -310,8 +314,9 @@ async function publishPackage(pkgName, version, runIfNotDry) {
     return
   }
 
-  // For now, all 3.x packages except "vue" can be published as
-  // `latest`, whereas "vue" will be published under the "next" tag.
+  // vue 包被发布在 next 标签下
+  // yarn add vue@next 安装
+  // 除 vue 之外的其他软件包都可以以 latest 标签发布
   let releaseTag = null
   if (args.tag) {
     releaseTag = args.tag
@@ -325,9 +330,6 @@ async function publishPackage(pkgName, version, runIfNotDry) {
     // TODO remove when 3.x becomes default
     releaseTag = 'next'
   }
-
-  // TODO use inferred release channel after official 3.0 release
-  // const releaseTag = semver.prerelease(version)[0] || null
 
   step(`Publishing ${pkgName}...`)
   try {
